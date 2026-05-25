@@ -13,12 +13,11 @@ public class UsuarioClient {
 
     @CircuitBreaker(name = "servicioUsuarios", fallbackMethod = "verificarUsuarioFallback")
     public boolean verificarUsuarioExterno(Long usuarioId) {
-        String url = "http://localhost:8080/api/usuarios/" + usuarioId;
+        String url = "http://host.docker.internal:8080/api/usuarios/" + usuarioId;
         Object respuesta = restTemplate.getForObject(url, Object.class);
         return respuesta != null;
     }
 
-    // Usamos Throwable para atrapar CUALQUIER error de conexión
     public boolean verificarUsuarioFallback(Long usuarioId, Throwable e) {
         System.out.println("⚠️ ALERTA CORTACIRCUITOS: No se pudo validar el usuario " + usuarioId + ". El microservicio está caído. Motivo: " + e.getMessage());
         return true; 

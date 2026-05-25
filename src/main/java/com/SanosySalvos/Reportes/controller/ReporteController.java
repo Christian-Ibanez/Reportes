@@ -17,24 +17,18 @@ public class ReporteController {
     @Autowired
     private ReporteService reporteService;
 
-    // --- HU-1 y HU-2: Crear un nuevo reporte ---
-    // Método POST: http://localhost:8081/api/reportes
     @PostMapping
     public ResponseEntity<ReporteResponseDTO> crearReporte(@RequestBody ReporteRequestDTO requestDTO) {
         ReporteResponseDTO nuevoReporte = reporteService.crearReporte(requestDTO);
         return new ResponseEntity<>(nuevoReporte, HttpStatus.CREATED);
     }
 
-    // --- Mostrar pines en el mapa ---
-    // Método GET: http://localhost:8081/api/reportes/activos
     @GetMapping("/activos")
     public ResponseEntity<List<ReporteResponseDTO>> obtenerReportesActivos() {
         List<ReporteResponseDTO> reportes = reporteService.obtenerReportesActivos();
         return ResponseEntity.ok(reportes);
     }
 
-    // --- HU-3: Marcar un caso como resuelto ---
-    // Método PUT: http://localhost:8081/api/reportes/1/resolver?usuarioId=5
     @PutMapping("/{id}/resolver")
     public ResponseEntity<ReporteResponseDTO> marcarComoResuelto(
             @PathVariable("id") Long reporteId,
