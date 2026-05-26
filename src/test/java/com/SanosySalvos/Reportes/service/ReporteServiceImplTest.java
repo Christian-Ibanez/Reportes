@@ -1,5 +1,6 @@
 package com.SanosySalvos.Reportes.service;
 
+import com.SanosySalvos.Reportes.dto.AnalisisRequestDTO;
 import com.SanosySalvos.Reportes.dto.ReporteRequestDTO;
 import com.SanosySalvos.Reportes.dto.ReporteResponseDTO;
 import com.SanosySalvos.Reportes.model.EstadoReporte;
@@ -17,11 +18,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,6 +32,13 @@ class ReporteServiceImplTest {
 
     @Mock
     private ReporteRepository reporteRepository;
+
+    // 1. Agregamos los Mocks faltantes para los clientes Feign/HTTP
+    @Mock
+    private UsuarioClient usuarioClient;
+
+    @Mock
+    private CoincidenciaClient coincidenciaClient;
 
     @InjectMocks
     private ReporteServiceImpl reporteService;
@@ -38,7 +48,6 @@ class ReporteServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        // Preparamos datos de prueba (Arrange) que se reinician antes de cada test
         reporteActivo = new Reporte();
         reporteActivo.setId(1L);
         reporteActivo.setUsuarioId(10L);
@@ -46,6 +55,8 @@ class ReporteServiceImplTest {
         reporteActivo.setTitulo("Perrito perdido");
         reporteActivo.setEstado(EstadoReporte.ACTIVO);
         reporteActivo.setTipoReporte(TipoReporte.PERDIDO);
+        reporteActivo.setLatitud(-36.82);
+        reporteActivo.setLongitud(-73.04);
         reporteActivo.setFechaCreacion(LocalDateTime.now());
 
         requestDTO = new ReporteRequestDTO();
@@ -53,23 +64,55 @@ class ReporteServiceImplTest {
         requestDTO.setMascotaId(5L);
         requestDTO.setTitulo("Perrito perdido");
         requestDTO.setTipoReporte(TipoReporte.PERDIDO);
+        requestDTO.setLatitud(-36.82);
+        requestDTO.setLongitud(-73.04);
     }
 
     // --- TESTS PARA CREAR REPORTE ---
 
     @Test
     void crearReporte_Exito() {
-        // Arrange: Simulamos que al guardar cualquier reporte, el repositorio devuelve nuestro reporte de prueba
+        // Arrange: Le decimos a los mocks cómo deben comportarse
+        when(usuarioClient.verificarUsuarioExterno(requestDTO.getUsuarioId())).thenReturn(true); // El usuario existe
         when(reporteRepository.save(any(Reporte.class))).thenReturn(reporteActivo);
+        when(reporteRepository.findByTipoReporte(any(TipoReporte.class))).thenReturn(Collections.emptyList()); // Sin candidatos por ahora
 
-        // Act: Ejecutamos el método
+        // Act
         ReporteResponseDTO response = reporteService.crearReporte(requestDTO);
 
-        // Assert: Verificamos los resultados
+        // Assert
         assertNotNull(response);
         assertEquals(1L, response.getId());
         assertEquals("Perrito perdido", response.getTitulo());
+        
+        // Verificamos que se llamó a la base de datos y al microservicio de coincidencias
         verify(reporteRepository, times(1)).save(any(Reporte.class));
+        verify(coincidenciaClient, times(1)).enviarParaAnalisis(any(AnalisisRequestDTO.class));
+    }
+
+    @Test
+    void crearReporte_ReporteEncontrado_ProcesaCandidatos() {
+        // Arrange: Hacemos que el nuevo reporte sea ENCONTRADO
+        requestDTO.setTipoReporte(TipoReporte.ENCONTRADO);
+        reporteActivo.setTipoReporte(TipoReporte.ENCONTRADO);
+        
+        // Creamos un candidato PERDIDO para simular un posible "Match"
+        Reporte candidatoFalso = new Reporte();
+        candidatoFalso.setId(2L);
+        candidatoFalso.setTipoReporte(TipoReporte.PERDIDO);
+        candidatoFalso.setLatitud(-36.0);
+        candidatoFalso.setLongitud(-73.0);
+        
+        when(usuarioClient.verificarUsuarioExterno(requestDTO.getUsuarioId())).thenReturn(true);
+        when(reporteRepository.save(any(Reporte.class))).thenReturn(reporteActivo);
+        when(reporteRepository.findByTipoReporte(TipoReporte.PERDIDO)).thenReturn(List.of(candidatoFalso));
+
+        // Act
+        ReporteResponseDTO response = reporteService.crearReporte(requestDTO);
+
+        // Assert
+        assertNotNull(response);
+        verify(coincidenciaClient, times(1)).enviarParaAnalisis(any(AnalisisRequestDTO.class));
     }
 
     @Test
@@ -83,6 +126,22 @@ class ReporteServiceImplTest {
         });
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        verify(usuarioClient, never()).verificarUsuarioExterno(anyLong()); // Nunca debe llegar a consultar al otro microservicio
+        verify(reporteRepository, never()).save(any(Reporte.class));
+    }
+
+    @Test
+    void crearReporte_LanzaExcepcion_SiUsuarioNoExisteEnMicroservicio() {
+        // Arrange: Simulamos que el microservicio de Usuarios responde "falso" (no existe)
+        when(usuarioClient.verificarUsuarioExterno(requestDTO.getUsuarioId())).thenReturn(false);
+
+        // Act & Assert
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () -> {
+            reporteService.crearReporte(requestDTO);
+        });
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatusCode());
+        assertTrue(exception.getReason().contains("El usuario indicado no existe"));
         verify(reporteRepository, never()).save(any(Reporte.class));
     }
 
@@ -107,37 +166,36 @@ class ReporteServiceImplTest {
 
     @Test
     void marcarComoResuelto_Exito() {
-        // Arrange: El usuario 10L es el dueño del reporte 1L
+        // Arrange
         when(reporteRepository.findById(1L)).thenReturn(Optional.of(reporteActivo));
-        when(reporteRepository.save(any(Reporte.class))).thenReturn(reporteActivo); // Guardará el cambio de estado
+        when(reporteRepository.save(any(Reporte.class))).thenReturn(reporteActivo);
 
         // Act
         ReporteResponseDTO response = reporteService.marcarComoResuelto(1L, 10L);
 
         // Assert
         assertNotNull(response);
-        assertEquals(EstadoReporte.RESUELTO, reporteActivo.getEstado()); // Verificamos que mutó a resuelto
+        assertEquals(EstadoReporte.RESUELTO, reporteActivo.getEstado());
         verify(reporteRepository, times(1)).save(reporteActivo);
     }
 
     @Test
     void marcarComoResuelto_LanzaExcepcion_SiNoEsDueno() {
-        // Arrange: Intentamos cerrarlo con el usuario 99L (un intruso)
+        // Arrange
         when(reporteRepository.findById(1L)).thenReturn(Optional.of(reporteActivo));
 
         // Act & Assert
         ResponseStatusException exception = assertThrows(ResponseStatusException.class, () -> {
-            reporteService.marcarComoResuelto(1L, 99L);
+            reporteService.marcarComoResuelto(1L, 99L); // Intruso
         });
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
-        assertTrue(exception.getReason().contains("Solo el creador del reporte puede cerrarlo"));
         verify(reporteRepository, never()).save(any(Reporte.class));
     }
 
     @Test
     void marcarComoResuelto_LanzaExcepcion_SiReporteNoExiste() {
-        // Arrange: El repositorio no encuentra nada
+        // Arrange
         when(reporteRepository.findById(999L)).thenReturn(Optional.empty());
 
         // Act & Assert

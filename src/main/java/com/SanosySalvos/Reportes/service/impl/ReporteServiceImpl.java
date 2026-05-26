@@ -1,10 +1,14 @@
 package com.SanosySalvos.Reportes.service.impl;
 
+import com.SanosySalvos.Reportes.dto.AnalisisRequestDTO;
+import com.SanosySalvos.Reportes.dto.ReporteCruzeDTO;
 import com.SanosySalvos.Reportes.dto.ReporteRequestDTO;
 import com.SanosySalvos.Reportes.dto.ReporteResponseDTO;
 import com.SanosySalvos.Reportes.model.EstadoReporte;
 import com.SanosySalvos.Reportes.model.Reporte;
+import com.SanosySalvos.Reportes.model.TipoReporte;
 import com.SanosySalvos.Reportes.repository.ReporteRepository;
+import com.SanosySalvos.Reportes.service.CoincidenciaClient;
 import com.SanosySalvos.Reportes.service.ReporteService;
 import com.SanosySalvos.Reportes.service.UsuarioClient;
 
@@ -24,6 +28,9 @@ public class ReporteServiceImpl implements ReporteService {
 
     @Autowired
     private UsuarioClient usuarioClient;
+
+    @Autowired
+    private CoincidenciaClient coincidenciaClient;
     
     @Override
     public ReporteResponseDTO crearReporte(ReporteRequestDTO requestDTO) {
@@ -49,23 +56,47 @@ public class ReporteServiceImpl implements ReporteService {
         
         Reporte reporteGuardado = reporteRepository.save(reporte);
 
-        return mapearAResponseDTO(reporteGuardado);
+        // Usamos reporteGuardado, que es la variable que sí existe en tu código
+        ReporteCruzeDTO nuevoDTO = new ReporteCruzeDTO();
+        nuevoDTO.setId(reporteGuardado.getId());
+        nuevoDTO.setTipoReporte(reporteGuardado.getTipoReporte().name());
+        nuevoDTO.setLatitud(reporteGuardado.getLatitud());
+        nuevoDTO.setLongitud(reporteGuardado.getLongitud());
+
+        TipoReporte tipoBuscado = reporteGuardado.getTipoReporte() == TipoReporte.PERDIDO ? TipoReporte.ENCONTRADO : TipoReporte.PERDIDO;
+    
+        List<ReporteCruzeDTO> candidatosDTO = reporteRepository.findByTipoReporte(tipoBuscado).stream().map(rep -> {
+            ReporteCruzeDTO dto = new ReporteCruzeDTO();
+            dto.setId(rep.getId());
+            dto.setTipoReporte(rep.getTipoReporte().name());
+            dto.setLatitud(rep.getLatitud());
+            dto.setLongitud(rep.getLongitud());
+            return dto;
+        }).toList();
+
+        AnalisisRequestDTO requestAnalisis = new AnalisisRequestDTO();
+            requestAnalisis.setReporteNuevo(nuevoDTO);
+            requestAnalisis.setCandidatos(candidatosDTO);
+
+            coincidenciaClient.enviarParaAnalisis(requestAnalisis);
+
+            return mapearAResponseDTO(reporteGuardado);
     }
 
     @Override
     public List<ReporteResponseDTO> obtenerReportesActivos() {
-        
+            
         List<Reporte> reportes = reporteRepository.findByEstado(EstadoReporte.ACTIVO);
-        
+            
         return reportes.stream()
-                .map(this::mapearAResponseDTO)
-                .collect(Collectors.toList());
+            .map(this::mapearAResponseDTO)
+            .collect(Collectors.toList());
     }
 
     @Override
     public ReporteResponseDTO marcarComoResuelto(Long reporteId, Long usuarioId) {
         Reporte reporte = reporteRepository.findById(reporteId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "El reporte no existe."));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "El reporte no existe."));
 
         if (!reporte.getUsuarioId().equals(usuarioId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Acceso denegado: Solo el creador del reporte puede cerrarlo.");

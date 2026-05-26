@@ -13,7 +13,7 @@ public class UsuarioClient {
 
     @CircuitBreaker(name = "servicioUsuarios", fallbackMethod = "verificarUsuarioFallback")
     public boolean verificarUsuarioExterno(Long usuarioId) {
-        String url = "http://host.docker.internal:8080/api/usuarios/" + usuarioId;
+        String url = "http://localhost:8080/api/usuarios/" + usuarioId;
         Object respuesta = restTemplate.getForObject(url, Object.class);
         return respuesta != null;
     }
