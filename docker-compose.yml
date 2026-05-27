@@ -1,0 +1,25 @@
+services:
+  # 1. BASE DE DATOS DE REPORTES (Con soporte para PostGIS)
+  postgres-reportes-db:
+    image: postgis/postgis:16-3.4
+    container_name: db_reportes
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Conce123
+      POSTGRES_DB: db_reportes
+    ports:
+      - "5434:5432"
+    restart: always
+
+  # 2. MICROSERVICIO DE GESTIÓN DE REPORTES
+  reportes-app:
+    build: .
+    container_name: reportes_service
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres-reportes-db
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-reportes-db:5432/db_reportes
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=Conce123
